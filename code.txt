@@ -1,0 +1,68 @@
+// Step 1: Load CHIRPS daily rainfall data
+var chirps = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY");
+
+// Define the time period
+var startDate = '2023-11-01';
+var endDate = '2024-11-30';
+var rainfall = chirps.filterDate(startDate, endDate);
+
+// Step 2: Load Kenya's administrative boundaries
+var kenya = ee.FeatureCollection("FAO/GAUL/2015/level1")
+               .filter(ee.Filter.eq('ADM0_NAME', 'Kenya')); // Filter for Kenya
+
+// Assign a numeric property to use as a mask
+var kenyaWithNumericProperty = kenya.map(function(feature) {
+  return feature.set('maskValue', 1); // Add a numeric property for masking
+});
+
+// Create a raster mask of Kenya
+var kenyaMask = kenyaWithNumericProperty.reduceToImage({
+  properties: ['maskValue'], // Use the numeric property
+  reducer: ee.Reducer.first()
+}).gt(0); // Mask values greater than 0
+
+// Center the map to Kenya and visualize boundaries
+Map.centerObject(kenya, 6);
+Map.addLayer(kenya, {}, "Kenya Boundaries");
+
+// Step 3: Mask the rainfall data to Kenya's boundaries
+var maskedRainfall = rainfall.map(function(image) {
+  return image.updateMask(kenyaMask);
+});
+
+// Calculate total rainfall over the period (within Kenya's boundaries)
+var totalRainfall = maskedRainfall.reduce(ee.Reducer.sum());
+
+// Visualize total rainfall within Kenya
+Map.addLayer(totalRainfall, {min: 0, max: 1000, palette: ['blue', 'green', 'yellow', 'red']}, 'Total Rainfall (Kenya)');
+
+// Step 4: Calculate average rainfall per district
+var districtRainfall = totalRainfall.reduceRegions({
+  collection: kenya,
+  reducer: ee.Reducer.mean(),
+  scale: 5000 // Adjust scale as per resolution requirements
+});
+
+// Print the results to the console
+print('Average Rainfall per District', districtRainfall);
+
+// Step 5: Convert the results to an image for visualization
+var styledImage = districtRainfall.reduceToImage({
+  properties: ['mean'],
+  reducer: ee.Reducer.first()
+});
+
+// Visualize the average rainfall per district
+var rainfallVisParams = {
+  min: 0,
+  max: 1000,
+  palette: ['blue', 'green', 'yellow', 'red']
+};
+Map.addLayer(styledImage, rainfallVisParams, 'Average Rainfall per District');
+
+// Step 6: Export the results to Google Drive
+Export.table.toDrive({
+  collection: districtRainfall,
+  description: 'Kenya_Rainfall_2023_2024',
+  fileFormat: 'CSV'
+});
